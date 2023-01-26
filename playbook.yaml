@@ -1,0 +1,225 @@
+- name: config servers
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Disable Password Authentication
+      lineinfile:
+                    dest=/etc/ssh/sshd_config
+                    regexp='^PasswordAuthentication'
+                    line='PasswordAuthentication no'
+                    state=present
+                    backup=yes
+      notify:
+                    - restart sshd
+
+
+    - name: Disable Root Login # Решил, что рута тоже стоит отключить (аля безопасность)
+      lineinfile:
+                     dest=/etc/ssh/sshd_config
+                     regexp='^PermitRootLogin'
+                     line='PermitRootLogin no'
+                     state=present
+                     backup=yes
+      notify:
+                     - restart sshd
+
+    - name: create user # пароль захардкожен для удобства
+      user:
+         name: DevOps
+         password: 1q2w3e
+      delegate_to: server_b
+
+    - name: sudo without password
+      copy:
+         dest: '/etc/sudoers.d/DevOps'
+         content: 'DevOps ALL=(ALL) NOPASSWD: ALL'
+      delegate_to: server_b
+
+    - name: upload ssh key # передаем ключ пользователя, от которого запускаем, на сервер
+      authorized_key:
+         user: DevOps
+         key: "{{ lookup('file', '/home/{{user}}/.ssh/id_rsa.pub') }}"
+         state: present
+      delegate_to: server_b
+
+    - name: Update apt repo and cache on Ubuntu box
+      apt:
+        update_cache: yes
+        force_apt_get: yes
+        cache_valid_time: 3600
+
+  #  - name: Upgrade all packages on servers # Надо ли это вообще?
+  #    apt:
+  #      upgrade: dist
+  #      force_apt_get: yes
+
+    - name: install prerequisites
+      apt: name={{ item }} state=latest
+      with_items:
+         - libpq-dev
+         - python-psycopg2
+      tags:
+         - packages
+      #delegate_to: server_b
+# вместе почему-то работают плохо, решил разделить
+
+    - name: Install required packages
+      apt:
+        name:
+          - wget
+          - python3-psycopg2
+          - acl
+        state: latest
+      #delegate_to: server_b
+
+    - name: Install postgresql-client
+      apt:
+         name: postgresql-client
+        #update_cache: yes
+      notify:
+       - Enable Postgresql
+      run_once: yes
+      delegate_to: server_c
+
+
+
+    - name: Install postgresql
+      apt:
+        name: postgresql
+        #update_cache: yes
+      notify:
+       - Enable Postgresql
+      run_once: true
+      delegate_to: server_b
+
+
+
+    - name: Create postgres user
+      become: yes
+      become_user: postgres
+      postgresql_user:
+        name: developer
+        password: md55416d7cd6ef195a0f7622a9c56b55e84 # можно только в зашифрованном виде
+      run_once: yes
+      delegate_to: server_b
+
+    - name: Create db myapp
+      postgresql_db:
+              state: present
+              name: "myapp"
+              encoding: 'UTF-8'
+              lc_collate: 'en_US.UTF-8'
+              lc_ctype: 'en_US.UTF-8' # это всё необязательно, но пусть будет
+              template: template0
+      become: yes
+      become_user: postgres
+      run_once: yes
+      delegate_to: server_b
+
+    - name: Create db myauth
+      postgresql_db:
+              state: present
+              name: "myauth"
+              encoding: 'UTF-8'
+              lc_collate: 'en_US.UTF-8'
+              lc_ctype: 'en_US.UTF-8'
+              template: template0
+      become: yes
+      run_once: yes
+      become_user: postgres
+
+    - name: create role
+      postgresql_query:
+              query: CREATE ROLE read_only_role;
+      postgresql_query:
+              query: CREATE ROLE read_write_role;
+      become: true
+      become_user: postgres
+      register: sql_data
+      ignore_errors: yes
+      run_once: yes
+      delegate_to: server_b
+
+    - name: config myuth  # почему-то с модулями Ansible работает плохо, решил так
+      postgresql_query:
+                query: USE myauth;
+      postgresql_query:
+                query: CREATE ROLE "read_only_role";
+      postgresql_query:
+                query: GRANT USAGE ON SCHEMA public TO read_only_role;
+      postgresql_query:
+                query: GRANT SELECT ON ALL TABLES IN SCHEMA public TO read_only_role;
+      postgresql_query:
+                query: GRANT read_only_role TO developer;
+      become: true
+      become_user: postgres
+      register: sql_data
+      run_once: yes
+      delegate_to: server_b
+      ignore_errors: yes
+
+    - name: config myapp
+      postgresql_query:
+              query: USE myapp
+      postgresql_query:
+              query: CREATE ROLE "read_write_role";
+      postgresql_query:
+              query: GRANT USAGE ON SCHEMA public TO read_write_role;
+      postgresql_query:
+                query: GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO read_write_role;
+      postgresql_query:
+                query: GRANT read_write_role TO developer;
+      become: true
+      become_user: postgres
+      register: sql_data
+      ignore_errors: yes
+      run_once: yes
+      delegate_to: server_b
+
+
+
+    - name: Ensure PostgreSQL is listening on *
+      lineinfile:
+        dest: /etc/postgresql/10/main/postgresql.conf
+        regexp: '^listen_addresses\s*='
+        #line: "listen_addresses='{{ip_c}}'"
+        line: "listen_addresses='*'" # можно указать прослушивать только один IP
+        state: present
+      run_once: yes
+      delegate_to: server_b
+
+
+    - name: clear pg_hba  # полностью очищаю файл таким образом
+      file:
+        path: /etc/postgresql/10/main/pg_hba.conf
+        state: absent
+    - name: test2
+      file:
+        path: /etc/postgresql/10/main/pg_hba.conf
+        state: touch
+      run_once: yes
+      delegate_to: server_b
+
+
+    - name: add new configuration to "pg_hba.conf"
+      blockinfile:
+        dest: /etc/postgresql/10/main/pg_hba.conf
+        block: |
+          local   all             all                                     peer
+          local   replication     all                                     peer
+          host    replication     all             {{ip_c}}/32            trust
+          host    all             developer       {{ip_c}}/32            trust
+      run_once: yes
+      delegate_to: server_b
+
+  handlers:
+    - name: restart sshd
+      service:
+                     name=sshd
+                     state=restarted
+
+    - name: Enable Postgresql
+      service:
+        name: postgresql
+        enabled: yes
