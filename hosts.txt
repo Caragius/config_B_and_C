@@ -1,0 +1,2 @@
+server_b ansible_host=100.0.0.2 ansible_ssh_user=vagrant ansible_sudo_pass=vagrant
+server_c ansible_host=100.0.0.3 ansible_ssh_user=vagrant ansible_sudo_pass=vagrant
