@@ -2,15 +2,23 @@
 
 Установка:
 
+
 sudo apt update && sudo apt -y install software-properties-common && sudo apt-add-repository ppa:ansible/ansible && sudo apt install -y ansible
+
 
 Во время установки в какой-то момент потребуется нажать Enter на клавиатуре
 
 Включение измерения времени:
 
- sudo vim /etc/ansible/ansible.cfg        (или воспользоваться другим редактором)
 
-В под [defaults] прописать callback_whitelist = profile_tasks
+ sudo vim /etc/ansible/ansible.cfg        (или воспользоваться другим редактором)
+ 
+
+В под [defaults] прописать
+
+
+callback_whitelist = profile_tasks
+
 
 Подготовка к запуску:
 
@@ -28,8 +36,11 @@ sudo apt update && sudo apt -y install software-properties-common && sudo apt-ad
  Далее требуется зайти на сервер В и прописать следующие команды
  
 sudo su - postgres
+
 pg_ctlcluster 10 main stop
+
 pg_ctlcluster 10 main start
+
 
 Далее можно зайти на сервер С и подключиться к базам данных с помощью psql
 
