@@ -206,8 +206,6 @@
       blockinfile:
         dest: /etc/postgresql/10/main/pg_hba.conf
         block: |
-          local   all             all                                     peer
-          local   replication     all                                     peer
           host    replication     all             {{ip_c}}/32            trust
           host    all             developer       {{ip_c}}/32            trust
       run_once: yes
